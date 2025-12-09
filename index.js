@@ -7,12 +7,13 @@ const path = require("path");
 const unzipper = require("unzipper");
 const archiver = require("archiver");
 
-const FILE_NAME = "package-diff.xml";
+const PACKAGE_DIFF_XML = "package-diff.xml";
 const SF_ROOT = findSfProjectRoot(__dirname);
 
-// ------------------------------
-// METADATA MAPPING
-// ------------------------------
+const RETRIEVE_FOLDER = 'retrievedSource';
+const BRANCH_FLAG = '-b';
+const CHANGESET_FLAG = '-cs';
+
 const mapping = {
     simple: [
         { dir: "/classes/", ext: ".cls", type: "ApexClass" },
@@ -45,7 +46,7 @@ function parseArgs() {
     const args = process.argv.slice(2);
 
     if (!args.length) {
-        console.log("Usage: node index.js -b <branch> | -cs <changeSetName>");
+        console.log(`Usage: node index.js ${BRANCH_FLAG} <branch> | ${CHANGESET_FLAG} <changeSetName>`);
         process.exit(1);
     }
 
@@ -54,12 +55,12 @@ function parseArgs() {
         return idx !== -1 ? args[idx + 1] : null;
     };
 
-    if (args.includes("-b")) {
-        generateDiffPackage(getArg("-b"));
+    if (args.includes(BRANCH_FLAG)) {
+        generateDiffPackage(getArg(BRANCH_FLAG));
     }
 
-    if (args.includes("-cs")) {
-        createChangeSet(getArg("-cs"));
+    if (args.includes(CHANGESET_FLAG)) {
+        updateChangeSet(getArg(CHANGESET_FLAG));
     }
 }
 
@@ -68,7 +69,7 @@ function parseArgs() {
 // ------------------------------
 function generateDiffPackage(targetBranch) {
     if (!targetBranch) {
-        console.error("❌ Missing required parameter: -b <branch>");
+        console.error(`❌ Missing required parameter: ${BRANCH_FLAG} <branch>`);
         process.exit(1);
     }
 
@@ -86,58 +87,57 @@ function generateDiffPackage(targetBranch) {
 
     const xml = generatePackageXML(grouped);
 
-    const outputPath = path.join(__dirname, "../manifest", FILE_NAME);
+    const outputPath = path.join(__dirname, PACKAGE_DIFF_XML);
     fs.writeFileSync(outputPath, xml);
 
-    console.log(`✅ ${FILE_NAME} created`);
+    console.log(`✅ ${PACKAGE_DIFF_XML} created`);
 }
 
-// ------------------------------
-// CHANGE SET CREATION
-// ------------------------------
-async function createChangeSet(changeSetName) {
+async function updateChangeSet(changeSetName) {
     if (!changeSetName) {
-        console.error("❌ Missing required parameter: -cs <name>");
+        console.error(`❌ Missing required parameter: ${CHANGESET_FLAG} <name>`);
         process.exit(1);
     }
 
-    console.log(`📦 Creating Change Set: ${changeSetName}`);
-    retrieveMetadata();
-    await extractPackage();
-    updatePackageXML(changeSetName);
-    await zipPackage();
-    deployPackage();
-    deleteRetrievedSource();
+    try {
+        retrieveMetadata();
+        await extractPackage();
+        updatePackageXML(changeSetName);
+        await zipPackage();
+        deployPackage();
+
+        console.log(`✅ Change set "${changeSetName}" is updated successfully`);
+
+    } catch (error) {
+        console.error(`❌ Error: ${error}`);
+    } finally {
+        deleteSources();
+    }
 }
 
-// ------------------------------
-// METADATA RETRIEVAL
-// ------------------------------
 function retrieveMetadata() {
     try {
+        console.log("🔍 Retrieving metadata...\n");
         execSync(
-            `sf project retrieve start --target-metadata-dir retrievedSource --manifest ../manifest/${FILE_NAME}`,
+            `sf project retrieve start --target-metadata-dir ${RETRIEVE_FOLDER} --manifest ${PACKAGE_DIFF_XML}`,
             { stdio: "inherit" }
         );
-        console.log("✅ Metadata retrieved");
+        console.log("\n✅ Metadata retrieved");
     } catch (err) {
         console.error("❌ Retrieval failed:", err.message);
         process.exit(1);
     }
 }
 
-// ------------------------------
-// EXTRACTION
-// ------------------------------
 function extractPackage() {
-    const zipPath = path.join(__dirname, "retrievedSource", "unpackaged.zip");
-    const extractPath = path.join(__dirname, "retrievedSource");
+    const zipPath = path.join(__dirname, RETRIEVE_FOLDER, "unpackaged.zip");
+    const extractPath = path.join(__dirname, RETRIEVE_FOLDER);
 
     return new Promise((resolve, reject) => {
         fs.createReadStream(zipPath)
             .pipe(unzipper.Extract({ path: extractPath }))
             .on("close", () => {
-                console.log("✅ Extracted:", extractPath);
+                console.log("✅ Zip extracted");
 
                 if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
 
@@ -147,11 +147,8 @@ function extractPackage() {
     });
 }
 
-// ------------------------------
-// UPDATE PACKAGE.XML
-// ------------------------------
 function updatePackageXML(changeSetName) {
-    const packagePath = path.join("retrievedSource", "unpackaged", "package.xml");
+    const packagePath = path.join(RETRIEVE_FOLDER, "unpackaged", "package.xml");
 
     let xml = fs.readFileSync(packagePath, "utf8");
 
@@ -165,12 +162,9 @@ function updatePackageXML(changeSetName) {
     console.log("✅ package.xml updated");
 }
 
-// ------------------------------
-// ZIP BACK
-// ------------------------------
 function zipPackage() {
-    const folder = path.join("retrievedSource", "unpackaged");
-    const outputZip = path.join("retrievedSource", "final.zip");
+    const folder = path.join(RETRIEVE_FOLDER, "unpackaged");
+    const outputZip = path.join(RETRIEVE_FOLDER, "final.zip");
 
     return new Promise((resolve, reject) => {
         const output = fs.createWriteStream(outputZip);
@@ -181,7 +175,7 @@ function zipPackage() {
         archive.finalize();
 
         output.on("close", () => {
-            console.log(`✅ ZIP created: ${outputZip}`);
+            console.log(`✅ ZIP created`);
             resolve();
         });
 
@@ -189,13 +183,10 @@ function zipPackage() {
     });
 }
 
-// ------------------------------
-// DEPLOY
-// ------------------------------
 function deployPackage() {
-    const zipPath = "retrievedSource/final.zip";
+    const zipPath = `${RETRIEVE_FOLDER}/final.zip`;
 
-    console.log("🚀 Deploying...");
+    console.log("🚀 Deploying to the Org...\n");
 
     execSync(
         `sf project deploy start --single-package --metadata-dir ${zipPath}`,
@@ -205,9 +196,6 @@ function deployPackage() {
     console.log("✅ Deployment finished");
 }
 
-// ------------------------------
-// GIT HELPERS
-// ------------------------------
 function getCurrentBranch() {
     return execSync("git rev-parse --abbrev-ref HEAD", {
         encoding: "utf8",
@@ -286,19 +274,19 @@ function generatePackageXML(grouped) {
     return xml;
 }
 
-function deleteRetrievedSource() {
-    const folder = path.join(__dirname, "retrievedSource");
+function deleteSources() {
+    const folder = path.join(__dirname, RETRIEVE_FOLDER);
+    const packageFile = path.join(__dirname, PACKAGE_DIFF_XML);
 
-    if (!fs.existsSync(folder)) {
-        return;
+    if (fs.existsSync(folder)) {
+        fs.rmSync(folder, { recursive: true, force: true });
     }
 
-    fs.rmSync(folder, { recursive: true, force: true });
+    if (fs.existsSync(packageFile)) {
+        fs.rmSync(packageFile, { force: true });
+    }
 }
 
-// ------------------------------
-// FIND SF ROOT
-// ------------------------------
 function findSfProjectRoot(startDir) {
     let dir = startDir;
 
