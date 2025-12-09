@@ -1,0 +1,23 @@
+{
+  "name": "sfpackagediffer",
+  "version": "1.0.0",
+  "description": "Salesforce package.xml generator",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pazhukh/sf-package-xml-diff.git"
+  },
+  "keywords": [
+    "salesforce",
+    "package.xml"
+  ],
+  "author": "Yaroslav Pazhukh",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/pazhukh/sf-package-xml-diff/issues"
+  },
+  "homepage": "https://github.com/pazhukh/sf-package-xml-diff#readme"
+}
