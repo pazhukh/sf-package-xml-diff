@@ -19,5 +19,9 @@
   "bugs": {
     "url": "https://github.com/pazhukh/sf-package-xml-diff/issues"
   },
-  "homepage": "https://github.com/pazhukh/sf-package-xml-diff#readme"
+  "homepage": "https://github.com/pazhukh/sf-package-xml-diff#readme",
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "unzipper": "^0.12.3"
+  }
 }
