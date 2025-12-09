@@ -1,10 +1,18 @@
+#!/usr/bin/env node
+
 const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
-const fileName = 'package-diff.xml';
+const unzipper = require("unzipper");
+const archiver = require("archiver");
 
-// Map file paths to Salesforce metadata types
+const FILE_NAME = "package-diff.xml";
+const SF_ROOT = findSfProjectRoot(__dirname);
+
+// ------------------------------
+// METADATA MAPPING
+// ------------------------------
 const mapping = {
     simple: [
         { dir: "/classes/", ext: ".cls", type: "ApexClass" },
@@ -16,104 +24,242 @@ const mapping = {
         { dir: "/permissionsets/", ext: ".permissionset-meta.xml", type: "PermissionSet" },
     ],
     bundle: [
-        { dir: "/lwc/", bundle: 'lwc', type: "LightningComponentBundle" },
-        { dir: "/aura/", bundle: 'aura', type: "AuraDefinitionBundle" },
+        { dir: "/lwc/", bundle: "lwc", type: "LightningComponentBundle" },
+        { dir: "/aura/", bundle: "aura", type: "AuraDefinitionBundle" },
     ],
-}
+};
 
-// Main execution
+// ------------------------------
+// ENTRY
+// ------------------------------
 run();
+
 function run() {
     parseArgs();
 }
 
+// ------------------------------
+// ARGUMENT HANDLING
+// ------------------------------
+function parseArgs() {
+    const args = process.argv.slice(2);
+
+    if (!args.length) {
+        console.log("Usage: node index.js -b <branch> | -cs <changeSetName>");
+        process.exit(1);
+    }
+
+    const getArg = (flag) => {
+        const idx = args.indexOf(flag);
+        return idx !== -1 ? args[idx + 1] : null;
+    };
+
+    if (args.includes("-b")) {
+        generateDiffPackage(getArg("-b"));
+    }
+
+    if (args.includes("-cs")) {
+        createChangeSet(getArg("-cs"));
+    }
+}
+
+// ------------------------------
+// DIFF PACKAGE GENERATION
+// ------------------------------
 function generateDiffPackage(targetBranch) {
-    if (targetBranch === undefined) {
+    if (!targetBranch) {
         console.error("❌ Missing required parameter: -b <branch>");
         process.exit(1);
     }
 
     const currentBranch = getCurrentBranch();
-
-    console.log(`🔍 Comparing "${currentBranch}" branch to "${targetBranch}"`);
+    console.log(`🔍 Comparing "${currentBranch}" → "${targetBranch}"`);
 
     const files = getChangedFiles(currentBranch, targetBranch);
-    console.log("Changed files:", files.length);
+    if (!files.length) {
+        console.log("No changes detected");
+        process.exit(0);
+    }
 
-    const metadata = files
-        .map(mapToMetadata)
-        .filter(Boolean);
-
+    const metadata = files.map(mapToMetadata).filter(Boolean);
     const grouped = groupMetadata(metadata);
+
     const xml = generatePackageXML(grouped);
 
-    const outputPath = path.join(__dirname, "manifest", fileName);
+    const outputPath = path.join(__dirname, "../manifest", FILE_NAME);
     fs.writeFileSync(outputPath, xml);
-    console.log(`✅ ${path.relative(__dirname, outputPath)} created!`);
+
+    console.log(`✅ ${FILE_NAME} created`);
 }
 
-// Get name of the current git branch
+// ------------------------------
+// CHANGE SET CREATION
+// ------------------------------
+async function createChangeSet(changeSetName) {
+    if (!changeSetName) {
+        console.error("❌ Missing required parameter: -cs <name>");
+        process.exit(1);
+    }
+
+    console.log(`📦 Creating Change Set: ${changeSetName}`);
+    retrieveMetadata();
+    await extractPackage();
+    updatePackageXML(changeSetName);
+    await zipPackage();
+    deployPackage();
+    deleteRetrievedSource();
+}
+
+// ------------------------------
+// METADATA RETRIEVAL
+// ------------------------------
+function retrieveMetadata() {
+    try {
+        execSync(
+            `sf project retrieve start --target-metadata-dir retrievedSource --manifest ../manifest/${FILE_NAME}`,
+            { stdio: "inherit" }
+        );
+        console.log("✅ Metadata retrieved");
+    } catch (err) {
+        console.error("❌ Retrieval failed:", err.message);
+        process.exit(1);
+    }
+}
+
+// ------------------------------
+// EXTRACTION
+// ------------------------------
+function extractPackage() {
+    const zipPath = path.join(__dirname, "retrievedSource", "unpackaged.zip");
+    const extractPath = path.join(__dirname, "retrievedSource");
+
+    return new Promise((resolve, reject) => {
+        fs.createReadStream(zipPath)
+            .pipe(unzipper.Extract({ path: extractPath }))
+            .on("close", () => {
+                console.log("✅ Extracted:", extractPath);
+
+                if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+
+                resolve();
+            })
+            .on("error", reject);
+    });
+}
+
+// ------------------------------
+// UPDATE PACKAGE.XML
+// ------------------------------
+function updatePackageXML(changeSetName) {
+    const packagePath = path.join("retrievedSource", "unpackaged", "package.xml");
+
+    let xml = fs.readFileSync(packagePath, "utf8");
+
+    xml = xml.replace(
+        '<Package xmlns="http://soap.sforce.com/2006/04/metadata">',
+        `<Package xmlns="http://soap.sforce.com/2006/04/metadata">\n    <fullName>${changeSetName}</fullName>`
+    );
+
+    fs.writeFileSync(packagePath, xml, "utf8");
+
+    console.log("✅ package.xml updated");
+}
+
+// ------------------------------
+// ZIP BACK
+// ------------------------------
+function zipPackage() {
+    const folder = path.join("retrievedSource", "unpackaged");
+    const outputZip = path.join("retrievedSource", "final.zip");
+
+    return new Promise((resolve, reject) => {
+        const output = fs.createWriteStream(outputZip);
+        const archive = archiver("zip", { zlib: { level: 9 } });
+
+        archive.pipe(output);
+        archive.directory(folder, false);
+        archive.finalize();
+
+        output.on("close", () => {
+            console.log(`✅ ZIP created: ${outputZip}`);
+            resolve();
+        });
+
+        archive.on("error", reject);
+    });
+}
+
+// ------------------------------
+// DEPLOY
+// ------------------------------
+function deployPackage() {
+    const zipPath = "retrievedSource/final.zip";
+
+    console.log("🚀 Deploying...");
+
+    execSync(
+        `sf project deploy start --single-package --metadata-dir ${zipPath}`,
+        { stdio: "inherit" }
+    );
+
+    console.log("✅ Deployment finished");
+}
+
+// ------------------------------
+// GIT HELPERS
+// ------------------------------
 function getCurrentBranch() {
-    return execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
+    return execSync("git rev-parse --abbrev-ref HEAD", {
+        encoding: "utf8",
+        cwd: SF_ROOT,
+    }).trim();
 }
 
-// Get list of changed files between two branches
 function getChangedFiles(currentBranch, targetBranch) {
     const diff = execSync(
         `git diff --name-only --diff-filter=AM $(git merge-base ${currentBranch} ${targetBranch}) ${currentBranch}`,
-        { encoding: "utf8" }
+        { encoding: "utf8", cwd: SF_ROOT }
     );
+
     return diff.split("\n").filter(Boolean);
 }
 
 function mapToMetadata(file) {
     const parts = file.split("/");
 
-    // ---- Helpers ----
     const getName = (suffix) => parts.pop().replace(suffix, "");
-    const getBundleName = (folder) => parts[parts.indexOf(folder) + 1];
+    const getBundle = (folder) => parts[parts.indexOf(folder) + 1];
 
-    for (const rule of mapping.simple) {
-        if (file.includes(rule.dir) && file.endsWith(rule.ext)) {
-            return {
-                type: rule.type,
-                name: getName(rule.ext)
-            };
+    for (const r of mapping.simple) {
+        if (file.includes(r.dir) && file.endsWith(r.ext)) {
+            return { type: r.type, name: getName(r.ext) };
         }
     }
 
-    for (const rule of mapping.bundle) {
-        if (file.includes(rule.dir)) {
-            return {
-                type: rule.type,
-                name: getBundleName(rule.bundle)
-            }
+    for (const r of mapping.bundle) {
+        if (file.includes(r.dir)) {
+            return { type: r.type, name: getBundle(r.bundle) };
         }
     }
 
-    // STATIC RESOURCES
     if (file.includes("/staticresources/")) {
-        const parts = file.split("/");
-        const folderName = parts[parts.indexOf("staticresources") + 1];
-        console.log(folderName);
-        const cleanName = folderName.split('.')[0];
-        return { type: "StaticResource", name: cleanName};
+        const f = parts[parts.indexOf("staticresources") + 1].split(".")[0];
+        return { type: "StaticResource", name: f };
     }
 
     return null;
 }
 
-// Group by metadata type
-function groupMetadata(changes) {
+function groupMetadata(items) {
     const grouped = {};
-    changes.forEach(item => {
-        if (!grouped[item.type]) grouped[item.type] = new Set();
-        grouped[item.type].add(item.name);
+
+    items.forEach((i) => {
+        if (!grouped[i.type]) grouped[i.type] = new Set();
+        grouped[i.type].add(i.name);
     });
 
-    // sort alphabeticaly
-    for (const type in grouped) {
-        grouped[type] = Array.from(grouped[type]).sort((a, b) =>
+    for (const t in grouped) {
+        grouped[t] = [...grouped[t]].sort((a, b) =>
             a.toLowerCase().localeCompare(b.toLowerCase())
         );
     }
@@ -121,19 +267,18 @@ function groupMetadata(changes) {
     return grouped;
 }
 
-// Generate package.xml content
-function generatePackageXML(groupedMetadata) {
+function generatePackageXML(grouped) {
     let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
     xml += '<Package xmlns="http://soap.sforce.com/2006/04/metadata">\n';
 
-    Object.keys(groupedMetadata).forEach(type => {
+    for (const type of Object.keys(grouped)) {
         xml += `  <types>\n`;
-        [...groupedMetadata[type]].forEach(name => {
+        grouped[type].forEach((name) => {
             xml += `    <members>${name}</members>\n`;
         });
         xml += `    <name>${type}</name>\n`;
         xml += `  </types>\n\n`;
-    });
+    }
 
     xml += `  <version>63.0</version>\n`;
     xml += `</Package>\n`;
@@ -141,17 +286,28 @@ function generatePackageXML(groupedMetadata) {
     return xml;
 }
 
-function parseArgs() {
-    const args = process.argv.slice(2);
+function deleteRetrievedSource() {
+    const folder = path.join(__dirname, "retrievedSource");
 
-    const getArg = (flag) => {
-        const idx = args.indexOf(flag);
-        return idx !== -1 ? args[idx + 1] : null;
-    };
-    
-    const bIndex = args.indexOf("-b");
-    if (bIndex !== -1) {
-        const targetBranch = getArg("-b");
-        generateDiffPackage(targetBranch);
+    if (!fs.existsSync(folder)) {
+        return;
     }
+
+    fs.rmSync(folder, { recursive: true, force: true });
+}
+
+// ------------------------------
+// FIND SF ROOT
+// ------------------------------
+function findSfProjectRoot(startDir) {
+    let dir = startDir;
+
+    while (dir !== path.parse(dir).root) {
+        if (fs.existsSync(path.join(dir, "force-app"))) {
+            return dir;
+        }
+        dir = path.dirname(dir);
+    }
+
+    throw new Error("❌ Salesforce project root not found.");
 }
