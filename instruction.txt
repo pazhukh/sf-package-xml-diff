@@ -1,3 +1,9 @@
-1. Move generatePackage.js into the root folder of Selesforce project.
-2. run command `node generatePackage.js uat`
-3. check generated diff-package.xml and do needed changes if needed
+1. Move sfPackageDiffer into the root folder of Selesforce project.
+
+2. run command `node index.js -b {branchName}` to generate package-diff.xml
+
+3. run command `node index.js -cs {changeSetName}` to populate change set
+in the org by generated package-diff.xml metadata.
+
+4. run command `node index.js -b {branchName} -cs {changeSetName}` to populate changeSetName
+by changed metadata comparing with branchName (combines 2 and 3 steps)
