@@ -15,24 +15,31 @@ const BRANCH_FLAG = '-b';
 const CHANGESET_FLAG = '-cs';
 
 const mapping = {
-    simple: [
+    singleFiles: [
         { dir: "/classes/", ext: ".cls", type: "ApexClass" },
         { dir: "/triggers/", ext: ".trigger", type: "ApexTrigger" },
         { dir: "/customMetadata/", ext: ".md-meta.xml", type: "CustomMetadata" },
         { dir: "/flexipages/", ext: ".flexipage-meta.xml", type: "FlexiPage" },
-        { dir: "/customObject/", ext: ".object-meta.xml", type: "CustomObject" },
+        { dir: "/objects/", ext: ".object-meta.xml", type: "CustomObject" },
         { dir: "/layouts/", ext: ".layout-meta.xml", type: "Layout" },
         { dir: "/permissionsets/", ext: ".permissionset-meta.xml", type: "PermissionSet" },
+        { dir: "/reportTypes/", ext: ".reportType-meta.xml", type: "ReportType" },
     ],
-    bundle: [
+    bundleTypes: [
         { dir: "/lwc/", bundle: "lwc", type: "LightningComponentBundle" },
         { dir: "/aura/", bundle: "aura", type: "AuraDefinitionBundle" },
     ],
-    combo: [
+    objectChildren: [
         { dir: "/fields/", ext: ".field-meta.xml", type: "CustomField" },
         { dir: "/fieldSets/", ext: ".fieldSet-meta.xml", type: "FieldSet" },
         { dir: "/validationRules/", ext: ".validationRule-meta.xml", type: "ValidationRule" },
+        { dir: "/webLinks/", ext: ".webLink-meta.xml", type: "WebLink" },
+        { dir: "/listViews/", ext: ".listView-meta.xml", type: "ListView" },
     ],
+    folderBased: [
+        { dir: "/dashboards/", ext: ".dashboard-meta.xml", type: "Dashboard" },
+        { dir: "/reports/", ext: ".report-meta.xml", type: "Report" },
+    ]
 };
 
 // ------------------------------
@@ -223,21 +230,27 @@ function mapToMetadata(file) {
     const getName = (suffix) => parts.pop().replace(suffix, "");
     const getBundle = (folder) => parts[parts.indexOf(folder) + 1];
 
-    for (const r of mapping.simple) {
+    for (const r of mapping.singleFiles) {
         if (file.includes(r.dir) && file.endsWith(r.ext)) {
             return { type: r.type, name: getName(r.ext) };
         }
     }
 
-    for (const r of mapping.bundle) {
+    for (const r of mapping.bundleTypes) {
         if (file.includes(r.dir)) {
             return { type: r.type, name: getBundle(r.bundle) };
         }
     }
 
-    for (const r of mapping.combo) {
+    for (const r of mapping.objectChildren) {
         if (file.includes(r.dir) && file.endsWith(r.ext)) {
             return { type: r.type, name: extractObjectMemberName(file) };
+        }
+    }
+
+    for (const r of mapping.folderBased) {
+        if (file.includes(r.dir) && file.endsWith(r.ext)) {
+            return { type: r.type, name: extractFolderMemberName(file) };
         }
     }
 
@@ -246,14 +259,13 @@ function mapToMetadata(file) {
         return { type: "StaticResource", name: f };
     }
 
-    if (file.includes("/dashboards/") && file.endsWith(".dashboard-meta.xml")) {
-        const f = file
-                .split("/dashboards/")[1]
-                .replace(".dashboard-meta.xml", "");
-        return { type: "Dashboard", name: f };
-    }
-
     return null;
+}
+
+function extractFolderMemberName(file) {
+    const target = file.split("/").slice(4);
+    target[target.length - 1] = target[target.length - 1].replace(/\.([a-zA-Z]+-)?meta\.xml$/, "");
+    return target.join("/");
 }
 
 function extractObjectMemberName(fullPath) {
