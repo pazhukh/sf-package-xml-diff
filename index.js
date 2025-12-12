@@ -19,7 +19,7 @@ const mapping = {
         { dir: "/classes/", ext: ".cls", type: "ApexClass" },
         { dir: "/triggers/", ext: ".trigger", type: "ApexTrigger" },
         { dir: "/customMetadata/", ext: ".md-meta.xml", type: "CustomMetadata" },
-        { dir: "/flexiPage/", ext: ".flexipage-meta.xml", type: "FlexiPage" },
+        { dir: "/flexipages/", ext: ".flexipage-meta.xml", type: "FlexiPage" },
         { dir: "/customObject/", ext: ".object-meta.xml", type: "CustomObject" },
         { dir: "/layouts/", ext: ".layout-meta.xml", type: "Layout" },
         { dir: "/permissionsets/", ext: ".permissionset-meta.xml", type: "PermissionSet" },
@@ -27,6 +27,11 @@ const mapping = {
     bundle: [
         { dir: "/lwc/", bundle: "lwc", type: "LightningComponentBundle" },
         { dir: "/aura/", bundle: "aura", type: "AuraDefinitionBundle" },
+    ],
+    combo: [
+        { dir: "/fields/", ext: ".field-meta.xml", type: "CustomField" },
+        { dir: "/fieldSets/", ext: ".fieldSet-meta.xml", type: "FieldSet" },
+        { dir: "/validationRules/", ext: ".validationRule-meta.xml", type: "ValidationRule" },
     ],
 };
 
@@ -230,12 +235,41 @@ function mapToMetadata(file) {
         }
     }
 
+    for (const r of mapping.combo) {
+        if (file.includes(r.dir) && file.endsWith(r.ext)) {
+            return { type: r.type, name: extractObjectMemberName(file) };
+        }
+    }
+
     if (file.includes("/staticresources/")) {
         const f = parts[parts.indexOf("staticresources") + 1].split(".")[0];
         return { type: "StaticResource", name: f };
     }
 
+    if (file.includes("/dashboards/") && file.endsWith(".dashboard-meta.xml")) {
+        const f = file
+                .split("/dashboards/")[1]
+                .replace(".dashboard-meta.xml", "");
+        return { type: "Dashboard", name: f };
+    }
+
     return null;
+}
+
+function extractObjectMemberName(fullPath) {
+    // Find the part after "objects/"
+    const afterObjects = fullPath.split("/objects/")[1];
+    if (!afterObjects) return null;
+
+    const parts = afterObjects.split("/");
+
+    const objectName = parts[0];
+    const fileName = parts[2];
+
+    // Strip any ".xxxx-meta.xml"
+    const stripped = fileName.replace(/\.([a-zA-Z]+-)?meta\.xml$/, "");
+
+    return `${objectName}.${stripped}`;
 }
 
 function groupMetadata(items) {
