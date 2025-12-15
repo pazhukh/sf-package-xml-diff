@@ -11,8 +11,17 @@ const PACKAGE_DIFF_XML = "package-diff.xml";
 const SF_ROOT = findSfProjectRoot(__dirname);
 
 const RETRIEVE_FOLDER = 'retrievedSource';
-const BRANCH_FLAG = '-b';
-const CHANGESET_FLAG = '-cs';
+const HELP_FLAG_SHORT = '-h';
+const HELP_FLAG = '--help';
+
+const BRANCH_FLAG_SHORT = '-b';
+const BRANCH_FLAG = '--branch';
+
+const RETRIEVE_ONLY_FLAG_SHORT = '-r';
+const RETRIEVE_ONLY_FLAG = '--retrieve-only';
+
+const DEPLOY_FLAG_SHORT = '-d';
+const DEPLOY_FLAG = '--deploy';
 
 const mapping = {
     singleFiles: [
@@ -57,22 +66,49 @@ function run() {
 function parseArgs() {
     const args = process.argv.slice(2);
 
-    if (!args.length) {
-        console.log(`Usage: node index.js ${BRANCH_FLAG} <branch> | ${CHANGESET_FLAG} <changeSetName>`);
-        process.exit(1);
+    const supportedFlags = [
+        HELP_FLAG, HELP_FLAG_SHORT,
+        BRANCH_FLAG, BRANCH_FLAG_SHORT,
+        RETRIEVE_ONLY_FLAG, RETRIEVE_ONLY_FLAG_SHORT,
+        DEPLOY_FLAG, DEPLOY_FLAG_SHORT
+    ];
+
+    const isHelpFlag = args.includes(HELP_FLAG) || args.includes(HELP_FLAG_SHORT);
+
+    if (!args.length || isHelpFlag) {
+        showHelp();
     }
+
+    // Check for unsupported flags
+    const inputFlags = args.filter(arg => arg.startsWith('-'));
+    const allUnsupported = inputFlags.length && inputFlags.every(f => !supportedFlags.includes(f));
+    if (allUnsupported) {
+        showHelp();
+    }
+
 
     const getArg = (flag) => {
         const idx = args.indexOf(flag);
         return idx !== -1 ? args[idx + 1] : null;
     };
 
-    if (args.includes(BRANCH_FLAG)) {
-        generateDiffPackage(getArg(BRANCH_FLAG));
+    const isBranchFlag = args.includes(BRANCH_FLAG) || args.includes(BRANCH_FLAG_SHORT);
+
+    if (!isBranchFlag) {
+        console.error(`❌ Missing required parameter: ${BRANCH_FLAG} <branch>`);
+        process.exit(1);
     }
 
-    if (args.includes(CHANGESET_FLAG)) {
-        updateChangeSet(getArg(CHANGESET_FLAG));
+    const branchName = getArg(BRANCH_FLAG) || getArg(BRANCH_FLAG_SHORT);
+    const isDeployFlag = args.includes(DEPLOY_FLAG) || args.includes(DEPLOY_FLAG_SHORT);
+    const isRetrieveFlag = args.includes(RETRIEVE_ONLY_FLAG) || args.includes(RETRIEVE_ONLY_FLAG_SHORT);
+
+    generateDiffPackage(branchName);
+
+    if (isDeployFlag) {
+        updateChangeSet(branchName);
+    } else if (isRetrieveFlag) {
+        retrieveMetadata(true);
     }
 }
 
@@ -80,11 +116,6 @@ function parseArgs() {
 // DIFF PACKAGE GENERATION
 // ------------------------------
 function generateDiffPackage(targetBranch) {
-    if (!targetBranch) {
-        console.error(`❌ Missing required parameter: ${BRANCH_FLAG} <branch>`);
-        process.exit(1);
-    }
-
     const currentBranch = getCurrentBranch();
     console.log(`🔍 Comparing "${currentBranch}" → "${targetBranch}"`);
 
@@ -107,7 +138,7 @@ function generateDiffPackage(targetBranch) {
 
 async function updateChangeSet(changeSetName) {
     if (!changeSetName) {
-        console.error(`❌ Missing required parameter: ${CHANGESET_FLAG} <name>`);
+        console.error(`❌ Missing required parameter: ${DEPLOY_FLAG} <name>`);
         process.exit(1);
     }
 
@@ -127,13 +158,21 @@ async function updateChangeSet(changeSetName) {
     }
 }
 
-function retrieveMetadata() {
+function retrieveMetadata(diffOnly) {
     try {
         console.log("🔍 Retrieving metadata...\n");
-        execSync(
-            `sf project retrieve start --target-metadata-dir ${RETRIEVE_FOLDER} --manifest ${PACKAGE_DIFF_XML}`,
-            { stdio: "inherit" }
-        );
+        if (diffOnly) {
+            execSync(
+                `sf project retrieve start --manifest ${PACKAGE_DIFF_XML}`,
+                { stdio: "inherit" }
+            );
+            deleteSources();
+        } else {
+            execSync(
+                `sf project retrieve start --target-metadata-dir ${RETRIEVE_FOLDER} --manifest ${PACKAGE_DIFF_XML}`,
+                { stdio: "inherit" }
+            );
+        }
         console.log("\n✅ Metadata retrieved");
     } catch (err) {
         console.error("❌ Retrieval failed:", err.message);
@@ -344,4 +383,42 @@ function findSfProjectRoot(startDir) {
     }
 
     throw new Error("❌ Salesforce project root not found.");
+}
+
+
+function showHelp() {
+    console.log(`
+        ====================================================
+        sfPackageDiffer CLI - Salesforce Metadata Tool
+        ====================================================
+        
+        Usage:
+          node index.js ${BRANCH_FLAG} | ${BRANCH_FLAG_SHORT} <branch>   Generate package-diff.xml containing metadata differences between current branch and target branch
+          node index.js ${BRANCH_FLAG} | ${BRANCH_FLAG_SHORT} <branch> ${RETRIEVE_ONLY_FLAG} | ${RETRIEVE_ONLY_FLAG_SHORT}   Retrieve only metadata that is different between current branch and target branch
+          node index.js ${BRANCH_FLAG} | ${BRANCH_FLAG_SHORT} <branch> ${DEPLOY_FLAG} | ${DEPLOY_FLAG_SHORT} <changeSetName>   Retrieve, update, zip, and deploy metadata for the specified change set
+          node index.js ${RETRIEVE_ONLY_FLAG} | ${RETRIEVE_ONLY_FLAG_SHORT}   Retrieve metadata based on existing package-diff.xml
+          node index.js ${DEPLOY_FLAG} | ${DEPLOY_FLAG_SHORT} <changeSetName>   Deploy metadata for the specified change set
+        
+        Flags:
+          ${BRANCH_FLAG}, ${BRANCH_FLAG_SHORT}     Specify a Git branch to compare with the current branch
+          ${RETRIEVE_ONLY_FLAG}, ${RETRIEVE_ONLY_FLAG_SHORT}   Retrieve metadata from Salesforce based on branches difference
+          ${DEPLOY_FLAG}, ${DEPLOY_FLAG_SHORT}     Name of the change set to populate
+          ${HELP_FLAG}, ${HELP_FLAG_SHORT}       Show help message
+        
+        Examples:
+          node index.js ${BRANCH_FLAG} develop
+          node index.js ${BRANCH_FLAG} develop ${RETRIEVE_ONLY_FLAG}
+          node index.js ${BRANCH_FLAG} develop ${DEPLOY_FLAG} MyChangeSet
+          node index.js ${BRANCH_FLAG} develop ${RETRIEVE_ONLY_FLAG}
+          node index.js ${BRANCH_FLAG} develop ${DEPLOY_FLAG} MyChangeSet
+        
+        Notes:
+        - The tool will generate a package-diff.xml file for changed metadata.
+        - It will retrieve metadata into a temporary folder (retrievedSource).
+        - Deploys are done via the Salesforce CLI (sf).
+        - All temporary files are cleaned after deployment.
+        
+        ====================================================
+    `);
+    process.exit(0);
 }
