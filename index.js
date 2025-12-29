@@ -33,6 +33,7 @@ const mapping = {
         { dir: "/layouts/", ext: ".layout-meta.xml", type: "Layout" },
         { dir: "/permissionsets/", ext: ".permissionset-meta.xml", type: "PermissionSet" },
         { dir: "/reportTypes/", ext: ".reportType-meta.xml", type: "ReportType" },
+        { dir: "/flows/", ext: ".flow-meta.xml", type: "Flow" },
     ],
     bundleTypes: [
         { dir: "/lwc/", bundle: "lwc", type: "LightningComponentBundle" },
