@@ -107,7 +107,8 @@ function parseArgs() {
     generateDiffPackage(branchName);
 
     if (isDeployFlag) {
-        updateChangeSet(branchName);
+        const changeSetName = getArg(DEPLOY_FLAG) || getArg(DEPLOY_FLAG_SHORT);
+        updateChangeSet(changeSetName);
     } else if (isRetrieveFlag) {
         retrieveMetadata(true);
     }
