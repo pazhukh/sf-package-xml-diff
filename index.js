@@ -10,6 +10,8 @@ const archiver = require("archiver");
 const PACKAGE_DIFF_XML = "package-diff.xml";
 const SF_ROOT = findSfProjectRoot(__dirname);
 
+let TARGET_ORG;
+
 const RETRIEVE_FOLDER = 'retrievedSource';
 const HELP_FLAG_SHORT = '-h';
 const HELP_FLAG = '--help';
@@ -22,6 +24,9 @@ const RETRIEVE_ONLY_FLAG = '--retrieve-only';
 
 const DEPLOY_FLAG_SHORT = '-d';
 const DEPLOY_FLAG = '--deploy';
+
+const TARGET_ORG_FLAG_SHORT = '-o';
+const TARGET_ORG_FLAG = '--target-org';
 
 const mapping = {
     singleFiles: [
@@ -71,7 +76,8 @@ function parseArgs() {
         HELP_FLAG, HELP_FLAG_SHORT,
         BRANCH_FLAG, BRANCH_FLAG_SHORT,
         RETRIEVE_ONLY_FLAG, RETRIEVE_ONLY_FLAG_SHORT,
-        DEPLOY_FLAG, DEPLOY_FLAG_SHORT
+        DEPLOY_FLAG, DEPLOY_FLAG_SHORT,
+        TARGET_ORG_FLAG, TARGET_ORG_FLAG_SHORT
     ];
 
     const isHelpFlag = args.includes(HELP_FLAG) || args.includes(HELP_FLAG_SHORT);
@@ -94,9 +100,14 @@ function parseArgs() {
     };
 
     const isBranchFlag = args.includes(BRANCH_FLAG) || args.includes(BRANCH_FLAG_SHORT);
-
     if (!isBranchFlag) {
         console.error(`❌ Missing required parameter: ${BRANCH_FLAG} <branch>`);
+        process.exit(1);
+    }
+
+    TARGET_ORG = getArg(TARGET_ORG_FLAG) || getArg(TARGET_ORG_FLAG_SHORT);
+    if (!TARGET_ORG) {
+        console.error(`❌ Missing required parameter: ${TARGET_ORG_FLAG} <targetOrg>`);
         process.exit(1);
     }
 
@@ -165,13 +176,13 @@ function retrieveMetadata(diffOnly) {
         console.log("🔍 Retrieving metadata...\n");
         if (diffOnly) {
             execSync(
-                `sf project retrieve start --manifest ${PACKAGE_DIFF_XML}`,
+                `sf project retrieve start --manifest ${PACKAGE_DIFF_XML} ${getTargetOrg()}`,
                 { stdio: "inherit" }
             );
             deleteSources();
         } else {
             execSync(
-                `sf project retrieve start --target-metadata-dir ${RETRIEVE_FOLDER} --manifest ${PACKAGE_DIFF_XML}`,
+                `sf project retrieve start --target-metadata-dir ${RETRIEVE_FOLDER} --manifest ${PACKAGE_DIFF_XML} ${getTargetOrg()}`,
                 { stdio: "inherit" }
             );
         }
@@ -242,7 +253,7 @@ function deployPackage() {
     console.log("🚀 Deploying to the Org...\n");
 
     execSync(
-        `sf project deploy start --single-package --metadata-dir ${zipPath}`,
+        `sf project deploy start --single-package --metadata-dir ${zipPath} ${getTargetOrg()}`,
         { stdio: "inherit" }
     );
 
@@ -387,32 +398,39 @@ function findSfProjectRoot(startDir) {
     throw new Error("❌ Salesforce project root not found.");
 }
 
+function getTargetOrg() {
+    return ` -o ${TARGET_ORG} `;
+}
 
 function showHelp() {
+    const targetOrg = `${TARGET_ORG_FLAG} | ${TARGET_ORG_FLAG_SHORT} <targetOrg>`;
+    const branch = `${BRANCH_FLAG} | ${BRANCH_FLAG_SHORT} <branch>`;
+    const retrieveOnly = `${RETRIEVE_ONLY_FLAG} | ${RETRIEVE_ONLY_FLAG_SHORT}`;
+    const deploy = `${DEPLOY_FLAG} | ${DEPLOY_FLAG_SHORT} <changeSetName>`;
+
     console.log(`
         ====================================================
         sfPackageDiffer CLI - Salesforce Metadata Tool
         ====================================================
         
         Usage:
-          node index.js ${BRANCH_FLAG} | ${BRANCH_FLAG_SHORT} <branch>   Generate package-diff.xml containing metadata differences between current branch and target branch
-          node index.js ${BRANCH_FLAG} | ${BRANCH_FLAG_SHORT} <branch> ${RETRIEVE_ONLY_FLAG} | ${RETRIEVE_ONLY_FLAG_SHORT}   Retrieve only metadata that is different between current branch and target branch
-          node index.js ${BRANCH_FLAG} | ${BRANCH_FLAG_SHORT} <branch> ${DEPLOY_FLAG} | ${DEPLOY_FLAG_SHORT} <changeSetName>   Retrieve, update, zip, and deploy metadata for the specified change set
-          node index.js ${RETRIEVE_ONLY_FLAG} | ${RETRIEVE_ONLY_FLAG_SHORT}   Retrieve metadata based on existing package-diff.xml
-          node index.js ${DEPLOY_FLAG} | ${DEPLOY_FLAG_SHORT} <changeSetName>   Deploy metadata for the specified change set
+          node index.js ${branch} ${targetOrg}  Generate package-diff.xml containing metadata differences between current branch and target branch
+          node index.js ${branch} ${targetOrg} ${retrieveOnly}  Retrieve only metadata that is different between current branch and target branch
+          node index.js ${branch} ${targetOrg} ${deploy}  Retrieve, update, zip, and deploy metadata for the specified change set
+          node index.js ${retrieveOnly}   Retrieve metadata based on existing package-diff.xml
         
         Flags:
           ${BRANCH_FLAG}, ${BRANCH_FLAG_SHORT}     Specify a Git branch to compare with the current branch
           ${RETRIEVE_ONLY_FLAG}, ${RETRIEVE_ONLY_FLAG_SHORT}   Retrieve metadata from Salesforce based on branches difference
           ${DEPLOY_FLAG}, ${DEPLOY_FLAG_SHORT}     Name of the change set to populate
+          ${TARGET_ORG_FLAG},    Specify a Salesforce org to deploy to
           ${HELP_FLAG}, ${HELP_FLAG_SHORT}       Show help message
         
         Examples:
-          node index.js ${BRANCH_FLAG} develop
-          node index.js ${BRANCH_FLAG} develop ${RETRIEVE_ONLY_FLAG}
-          node index.js ${BRANCH_FLAG} develop ${DEPLOY_FLAG} MyChangeSet
-          node index.js ${BRANCH_FLAG} develop ${RETRIEVE_ONLY_FLAG}
-          node index.js ${BRANCH_FLAG} develop ${DEPLOY_FLAG} MyChangeSet
+          node index.js ${TARGET_ORG_FLAG_SHORT} mySfOrg ${BRANCH_FLAG_SHORT} develop                    Generate package-diff.xml containing metadata differences between current branch and target branch
+          node index.js ${TARGET_ORG_FLAG_SHORT} mySfOrg ${BRANCH_FLAG_SHORT} develop ${RETRIEVE_ONLY_FLAG_SHORT}                 Retrieve only metadata that is different between current branch and target branch
+          node index.js ${TARGET_ORG_FLAG_SHORT} mySfOrg ${BRANCH_FLAG_SHORT} develop ${DEPLOY_FLAG_SHORT} MyChangeSet     Retrieve, update, zip, and deploy metadata for the specified change set
+          node index.js ${TARGET_ORG_FLAG_SHORT} mySfOrg ${RETRIEVE_ONLY_FLAG_SHORT}                            Retrieve metadata based on existing package-diff.xml
         
         Notes:
         - The tool will generate a package-diff.xml file for changed metadata.
